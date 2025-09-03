@@ -20,16 +20,19 @@ def create_scroll_flow():
     """Create a scrolling flow to trigger lazy loading."""
     flow = [
         {"wait_for": {"selectors": ["article[data-test='property-card']"], "timeout": 30000, "visible": True}},
-        {"scroll_to": {"selector": "article[data-test='property-card']:last-child", "visible": False}},
+        {"scroll_to": {"selector": "article[data-test='property-card']:last-child", "visible": True}},
         {"wait": {"delay": 5000}},
-        {"scroll_to": {"selector": "body", "visible": False}},
+        {"scroll_to": {"selector": "body", "visible": True}},
         {"wait": {"delay": 5000}},
+        {"infinite_scroll": {"duration": 120000, "loading_selector": "div[data-test='loading-spinner']", "delay_after_scroll": 5000, "idle_timeout": 15000}},
+        {"scroll_to": {"selector": "article[data-test='property-card']:last-child", "visible": True}},
+        {"wait": {"delay": 10000}},
         {"infinite_scroll": {"duration": 60000, "loading_selector": "div[data-test='loading-spinner']", "delay_after_scroll": 5000, "idle_timeout": 10000}},
         {"wait": {"delay": 10000}}
     ]
     return flow
 
-def nimble_request(url, render_flow=None, retries=2, timeout=120):
+def nimble_request(url, render_flow=None, retries=7, timeout=120):
     """Send a request to Nimble Web API with retries and timeout."""
     headers = {
         "Authorization": f"Basic {NIMBLE_API_KEY}",
@@ -48,19 +51,44 @@ def nimble_request(url, render_flow=None, retries=2, timeout=120):
             response.raise_for_status()
             result = response.json()
             if result["status"] == "success":
+                print(f"Successfully fetched {url}")
                 return result["html_content"]
             print(f"Request to {url} failed: {result.get('message', 'Unknown error')}")
             return None
         except Exception as e:
             print(f"Attempt {attempt + 1} failed for {url}: {str(e)}")
             if attempt < retries - 1:
-                time.sleep(random.uniform(3, 5))
+                time.sleep(random.uniform(5, 15))
             continue
     print(f"Failed to fetch {url} after {retries} attempts")
     return None
 
 def extract_property_details(card):
-    """Extract ZPID, URL, and address from a property card."""
+    """Extract ZPID, URL, and address from a property card that has a 'Request a tour' button."""
+    # # Check for "Request a tour" button
+    # button_selectors = [
+    #     'button[data-test="request-tour-button"]',
+    #     'a[data-test="request-tour-button"]',
+    #     'button:contains("Request a tour")',
+    #     'a:contains("Request a tour")',
+    #     'button[class*="request-tour"]',
+    #     'a[class*="request-tour"]',
+    #     'button:contains("Tour")',  # Broader match for variations
+    #     'a:contains("Tour")',
+    #     'div[class*="tour-button"]',
+    #     'span[class*="tour-button"]'
+    # ]
+    # has_request_tour = False
+    # for selector in button_selectors:
+    #     button = card.select_one(selector)
+    #     if button:
+    #         has_request_tour = True
+    #         print(f"Found 'Request a tour' button in card: {button.text.strip()}")
+    #         break
+    # if not has_request_tour:
+    #     print("No 'Request a tour' button found in card, skipping")
+    #     return None
+
     zpid = card.get('id', '').replace('zpid_', '').replace('property-card-', '')
     link = card.find('a', {'data-test': 'property-card-link'})
     url = f"https://www.zillow.com{link['href']}" if link and 'href' in link.attrs and not link['href'].startswith('http') else link['href'] if link else None
@@ -203,52 +231,69 @@ def extract_apartment_details(url):
     return details
 
 def scrape_zillow_rentals():
-    """Scrape all property cards from the first page and extract apartment details."""
+    """Scrape all property cards from all pages and extract apartment details."""
     initial_url = "https://www.zillow.com/bloomington-il-61761/rentals/?searchQueryState=%7B%22isMapVisible%22%3Atrue%2C%22mapBounds%22%3A%7B%22north%22%3A40.636718508366414%2C%22south%22%3A40.43345579864026%2C%22east%22%3A-88.85417987207032%2C%22west%22%3A-89.1054921279297%7D%2C%22filterState%22%3A%7B%22fr%22%3A%7B%22value%22%3Atrue%7D%2C%22fsba%22%3A%7B%22value%22%3Afalse%7D%2C%22fsbo%22%3A%7B%22value%22%3Afalse%7D%2C%22nc%22%3A%7B%22value%22%3Afalse%7D%2C%22cmsn%22%3A%7B%22value%22%3Afalse%7D%2C%22auc%22%3A%7B%22value%22%3Afalse%7D%2C%22fore%22%3A%7B%22value%22%3Afalse%7D%2C%22mp%22%3A%7B%22min%22%3A1000%2C%22max%22%3A2000%7D%2C%22tow%22%3A%7B%22value%22%3Afalse%7D%2C%22mf%22%3A%7B%22value%22%3Afalse%7D%2C%22con%22%3A%7B%22value%22%3Afalse%7D%2C%22land%22%3A%7B%22value%22%3Afalse%7D%2C%22apa%22%3A%7B%22value%22%3Afalse%7D%2C%22manu%22%3A%7B%22value%22%3Afalse%7D%2C%22apco%22%3A%7B%22value%22%3Afalse%7D%2C%22r4r%22%3A%7B%22value%22%3Atrue%7D%7D%2C%22isListVisible%22%3Atrue%2C%22mapZoom%22%3A12%2C%22usersSearchTerm%22%3A%2261761%22%2C%22regionSelection%22%3A%5B%7B%22regionId%22%3A85145%2C%22regionType%22%3A7%7D%5D%7D"
     all_properties = []
     scroll_flow = create_scroll_flow()
-    
-    print(f"Processing page: {initial_url}")
-    html = nimble_request(initial_url, render_flow=scroll_flow)
-    if not html:
-        print("Failed to fetch page")
-        return
-    
-    soup = BeautifulSoup(html, 'html.parser')
-    cards = soup.select('article[data-test="property-card"]')
-    print(f"Found {len(cards)} cards")
-    if len(cards) < 9:
-        print("Warning: Fewer cards found than expected. Saving raw HTML for debugging.")
-        with open('search_page_debug.html', 'w', encoding='utf-8') as f:
-            f.write(str(soup))
-    
-    for card in cards:
-        details = extract_property_details(card)
-        if details['url']:
-            print(f"Fetching details for {details['url']}")
-            try:
-                # Set a maximum timeout for detail page fetching
-                apartment_details = extract_apartment_details(details['url'])
-                if apartment_details:
-                    # Update address only if card address is 'Unknown'
-                    if details['address'] == 'Unknown' and apartment_details.get('address') != 'Unknown':
-                        details['address'] = apartment_details['address']
-                    details.update({k: v for k, v in apartment_details.items() if k != 'address'})
-                all_properties.append(details)
-            except Exception as e:
-                print(f"Error processing {details['url']}: {str(e)}. Saving partial data.")
-                all_properties.append(details)
-            time.sleep(random.uniform(3, 5))  # Increased delay to avoid rate limiting
-    
+    page = 1
+    max_pages = 5  # Adjust based on expected number of pages
+
+    while page <= max_pages:
+        print(f"Processing page {page}: {initial_url}")
+        # Update URL with pagination
+        url = initial_url
+        if page > 1:
+            query_state = json.loads(urllib.parse.unquote(initial_url.split('searchQueryState=')[1]))
+            query_state['pagination'] = {'currentPage': page}
+            url = f"{initial_url.split('?')[0]}?searchQueryState={urllib.parse.quote(json.dumps(query_state))}"
+
+        html = nimble_request(url, render_flow=scroll_flow)
+        if not html:
+            print(f"Failed to fetch page {page}")
+            break
+
+        soup = BeautifulSoup(html, 'html.parser')
+        cards = soup.select('article[data-test="property-card"]')
+        print(f"Found {len(cards)} cards on page {page}")
+
+        if len(cards) < 9:
+            print(f"Warning: Fewer cards ({len(cards)}) found than expected on page {page}. Saving raw HTML for debugging.")
+            with open(f'search_page_debug_page_{page}.html', 'w', encoding='utf-8') as f:
+                f.write(str(soup))
+
+        for card in cards:
+            details = extract_property_details(card)
+            if details:  # Only process cards with "Request a tour" button
+                if details['url']:
+                    print(f"Fetching details for {details['url']}")
+                    try:
+                        apartment_details = extract_apartment_details(details['url'])
+                        if apartment_details:
+                            if details['address'] == 'Unknown' and apartment_details.get('address') != 'Unknown':
+                                details['address'] = apartment_details['address']
+                            details.update({k: v for k, v in apartment_details.items() if k != 'address'})
+                        all_properties.append(details)
+                    except Exception as e:
+                        print(f"Error processing {details['url']}: {str(e)}. Saving partial data.")
+                        all_properties.append(details)
+                    time.sleep(random.uniform(3, 5))
+
+        # Check for pagination controls
+        pagination = soup.select_one('a[aria-label="Next page"]') or soup.select_one('a[class*="pagination-next"]')
+        if not pagination or not pagination.get('href'):
+            print(f"No more pages found after page {page}")
+            break
+        page += 1
+
     if not all_properties:
         print("No properties found.")
         return
-    
+
     print(f"\nFound {len(all_properties)} properties")
     print("First 5 properties:")
     for i, prop in enumerate(all_properties[:5]):
         print(f"  {i+1}. {prop['address']} ({prop['url']})")
-    
+
     # Save to CSV
     csv_columns = ['zpid', 'address', 'url', 'price', 'bedrooms', 'bathrooms', 'sqft', 'pets_allowed', 'laundry', 'parking', 'cooling', 'heating']
     with open('zillow_rentals.csv', 'w', newline='', encoding='utf-8') as csvfile:
